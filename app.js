@@ -304,6 +304,7 @@
     isListening: false,
     isBusy: false, // true di antara klik tombol sampai onstart/onend/onerror benar2 terjadi
     finalText: "",
+    lastFinalChunk: "", // NEW: simpan final chunk terakhir untuk deteksi duplikat
     lang: "id-ID",
     currentRowEl: null,
 
@@ -378,6 +379,7 @@
     handleStart() {
       this.isListening = true;
       this.isBusy = false; // settle: tombol boleh diklik lagi
+      this.lastFinalChunk = ""; // NEW: reset deteksi duplikat di awal sesi baru
 
       const micBtn = $("#sttMicBtn");
       micBtn.classList.remove("is-off");
@@ -447,9 +449,22 @@
       }
 
       if (finalChunk) {
-        this.finalText += (this.finalText ? " " : "") + finalChunk.trim();
-        this.appendFinalRow(finalChunk.trim());
-        this.currentRowEl = null;
+        const trimmedChunk = finalChunk.trim();
+
+        // NEW: guard anti-duplikat.
+        // Beberapa versi Chrome Android pernah dilaporkan mengirim ulang
+        // final result yang sama persis lewat event onresult berikutnya
+        // (resultIndex tidak selalu bergerak maju dengan benar di mobile).
+        // Kalau chunk final baru ini identik dengan chunk final SEBELUMNYA,
+        // anggap ini pengiriman ulang dan jangan diproses lagi.
+        if (trimmedChunk === this.lastFinalChunk) {
+          // skip — duplikat dari event sebelumnya
+        } else {
+          this.lastFinalChunk = trimmedChunk;
+          this.finalText += (this.finalText ? " " : "") + trimmedChunk;
+          this.appendFinalRow(trimmedChunk);
+          this.currentRowEl = null;
+        }
       }
 
       if (interim) {
@@ -492,6 +507,7 @@
 
     clear() {
       this.finalText = "";
+      this.lastFinalChunk = ""; // NEW
       this.currentRowEl = null;
       $("#transcriptScroll").innerHTML = `
         <div class="transcript-empty" id="transcriptEmptyState">
