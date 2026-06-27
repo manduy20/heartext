@@ -304,7 +304,8 @@
     isListening: false,
     isBusy: false, // true di antara klik tombol sampai onstart/onend/onerror benar2 terjadi
     finalText: "",
-    lastFinalChunk: "", // NEW: simpan final chunk terakhir untuk deteksi duplikat
+    lastFinalChunk: "", // teks final terakhir yang sudah dirender (untuk deteksi overlap)
+    lastFinalRowEl: null, // NEW: elemen DOM baris final terakhir, agar bisa di-update isinya
     lang: "id-ID",
     currentRowEl: null,
 
@@ -379,7 +380,8 @@
     handleStart() {
       this.isListening = true;
       this.isBusy = false; // settle: tombol boleh diklik lagi
-      this.lastFinalChunk = ""; // NEW: reset deteksi duplikat di awal sesi baru
+      this.lastFinalChunk = ""; // reset deteksi overlap di awal sesi baru
+      this.lastFinalRowEl = null; // NEW
 
       const micBtn = $("#sttMicBtn");
       micBtn.classList.remove("is-off");
@@ -451,18 +453,39 @@
       if (finalChunk) {
         const trimmedChunk = finalChunk.trim();
 
-        // NEW: guard anti-duplikat.
-        // Beberapa versi Chrome Android pernah dilaporkan mengirim ulang
-        // final result yang sama persis lewat event onresult berikutnya
-        // (resultIndex tidak selalu bergerak maju dengan benar di mobile).
-        // Kalau chunk final baru ini identik dengan chunk final SEBELUMNYA,
-        // anggap ini pengiriman ulang dan jangan diproses lagi.
-        if (trimmedChunk === this.lastFinalChunk) {
-          // skip — duplikat dari event sebelumnya
+        // Penjelasan masalah:
+        // Web Speech API (terutama di Chrome Android) kadang me-final-kan
+        // ucapan secara bertahap: "halo" di-final-kan dulu sebagai potongan
+        // sementara, lalu begitu pembicara lanjut bicara, engine mengirim
+        // final result BARU yang merupakan KALIMAT YANG SUDAH DIPERLUAS,
+        // misalnya "halo guys" -- bukan cuma "guys". Kalau kita treat ini
+        // sebagai dua final chunk yang berbeda dan APPEND keduanya, hasilnya
+        // "halo" lalu "halo guys" tampil sebagai dua baris terpisah --
+        // kelihatan seperti dobel padahal sebenarnya "halo guys" sudah
+        // mencakup "halo" di awalnya.
+        //
+        // Fix: kalau chunk final baru ini DIAWALI oleh chunk final
+        // sebelumnya (prefix match), berarti ini perluasan dari final
+        // result yang sama -> GANTI baris sebelumnya, jangan tambah baris
+        // baru. Kalau tidak ada hubungan prefix sama sekali, baru anggap
+        // sebagai ucapan baru dan tambah baris baru seperti biasa.
+        const prev = this.lastFinalChunk;
+        const isExactDuplicate = trimmedChunk === prev;
+        const isExtension = prev && trimmedChunk.startsWith(prev) && trimmedChunk !== prev;
+
+        if (isExactDuplicate) {
+          // skip — pengiriman ulang murni, tidak ada info baru
+        } else if (isExtension && this.lastFinalRowEl) {
+          // Perluasan dari chunk sebelumnya -> update baris yang sudah ada
+          this.finalText = this.finalText.slice(0, this.finalText.length - prev.length) + trimmedChunk;
+          this.lastFinalRowEl.querySelector(".transcript-text").textContent = trimmedChunk;
+          this.lastFinalChunk = trimmedChunk;
+          this.currentRowEl = null;
         } else {
+          // Ucapan final baru yang sama sekali berbeda -> baris baru
           this.lastFinalChunk = trimmedChunk;
           this.finalText += (this.finalText ? " " : "") + trimmedChunk;
-          this.appendFinalRow(trimmedChunk);
+          this.lastFinalRowEl = this.appendFinalRow(trimmedChunk);
           this.currentRowEl = null;
         }
       }
@@ -486,6 +509,7 @@
           <p class="transcript-text">${escapeHtml(text)}</p>
         </div>`;
       scroll.appendChild(row);
+      return row; // NEW: dikembalikan agar bisa di-update isinya kalau ada perluasan chunk
     },
 
     renderInterim(text) {
@@ -507,7 +531,8 @@
 
     clear() {
       this.finalText = "";
-      this.lastFinalChunk = ""; // NEW
+      this.lastFinalChunk = "";
+      this.lastFinalRowEl = null; // NEW
       this.currentRowEl = null;
       $("#transcriptScroll").innerHTML = `
         <div class="transcript-empty" id="transcriptEmptyState">
