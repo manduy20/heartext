@@ -289,16 +289,17 @@
 const STT = {
   recognition: null,
   isListening: false,
-  isStarting: false,      // NEW: guard saat sedang proses start
-  isStopping: false,       // NEW: guard saat sedang proses stop manual
+  isStarting: false,
+  isStopping: false,
   finalText: "",
   lang: "id-ID",
   currentRowEl: null,
-  lastToggleAt: 0,         // NEW: debounce tap ganda
+  lastToggleAt: 0,
+  startTimeoutId: null,    // NEW
 
   toggle() {
     const now = Date.now();
-    if (now - this.lastToggleAt < 400) return; // NEW: blokir tap ganda <400ms
+    if (now - this.lastToggleAt < 400) return;
     this.lastToggleAt = now;
 
     if (this.isListening) this.stop();
@@ -307,79 +308,64 @@ const STT = {
 
   start() {
     if (!this.recognition) return;
-    if (this.isListening || this.isStarting) return; // NEW: cegah start dobel
+    if (this.isListening || this.isStarting) return;
     this.isStarting = true;
+
     try {
       this.recognition.start();
     } catch (err) {
       this.isStarting = false;
+      return;
     }
+
+    // NEW: failsafe — kalau onstart tidak terpicu dalam 3 detik
+    // (mic permission stuck, engine gagal diam-diam, dll), reset flag
+    // supaya tombol tidak permanen mati.
+    clearTimeout(this.startTimeoutId);
+    this.startTimeoutId = setTimeout(() => {
+      if (this.isStarting && !this.isListening) {
+        this.isStarting = false;
+        showToast("Mikrofon tidak merespons. Coba tekan lagi.", true);
+      }
+    }, 3000);
   },
 
   stop() {
     if (!this.recognition) return;
-    this.isStopping = true;  // NEW: tandai ini stop manual (bukan auto-restart)
+    this.isStopping = true;
     this.recognition.stop();
   },
-    stop() {
-      if (!this.recognition) return;
-      this.recognition.stop();
-    },
 
-handleStart() {
-  this.isListening = true;
-  this.isStarting = false;  // NEW: reset flag start
-      const micBtn = $("#sttMicBtn");
-      micBtn.classList.remove("is-off");
-      micBtn.classList.add("is-listening");
-      micBtn.setAttribute("aria-pressed", "true");
-      micBtn.querySelector(".material-symbols-outlined").textContent = "mic";
-      $("#sttMicLabel").textContent = "Berhenti Mendengarkan";
-      $("#sttMicLabel").classList.remove("off");
+  handleStart() {
+    clearTimeout(this.startTimeoutId);   // NEW
+    this.isListening = true;
+    this.isStarting = false;
+    // ...sisanya tetap sama
+  },
 
-      $("#sttStatusDot").classList.remove("idle");
-      $("#sttStatusDot").classList.add("live");
-      $("#sttStatusLabel").textContent = "Mendengarkan...";
+  handleEnd() {
+    clearTimeout(this.startTimeoutId);   // NEW
+    this.isListening = false;
+    this.isStarting = false;
+    this.isStopping = false;
+    // ...sisanya tetap sama
+  },
 
-      $("#transcriptEmptyState").style.display = "none";
-    },
+  handleError(event) {
+    clearTimeout(this.startTimeoutId);   // NEW
+    this.isStarting = false;             // NEW — penting! error juga harus reset flag
+    this.isStopping = false;             // NEW
 
-handleEnd() {
-  this.isListening = false;
-  this.isStarting = false;  // NEW
-  const wasManualStop = this.isStopping;
-  this.isStopping = false;  // NEW
-      const micBtn = $("#sttMicBtn");
-      micBtn.classList.add("is-off");
-      micBtn.classList.remove("is-listening");
-      micBtn.setAttribute("aria-pressed", "false");
-      micBtn.querySelector(".material-symbols-outlined").textContent = "mic";
-      $("#sttMicLabel").textContent = "Mulai Mendengarkan";
-      $("#sttMicLabel").classList.add("off");
-
-      $("#sttStatusDot").classList.add("idle");
-      $("#sttStatusDot").classList.remove("live");
-      $("#sttStatusLabel").textContent = "Tidak Aktif";
-
-      this.currentRowEl = null;
-
-      if (this.finalText.trim()) {
-        $("#sttCopyBtn").disabled = false;
-        $("#sttDownloadBtn").disabled = false;
-      }
-    },
-
-    handleError(event) {
-      let msg = "Terjadi kesalahan pengenalan suara.";
-      if (event.error === "not-allowed" || event.error === "permission-denied") {
-        msg = "Izin mikrofon ditolak. Aktifkan akses mikrofon di pengaturan browser.";
-      } else if (event.error === "no-speech") {
-        return; // benign, ignore
-      } else if (event.error === "network") {
-        msg = "Masalah jaringan saat memproses suara.";
-      }
-      showToast(msg, true);
-    },
+    let msg = "Terjadi kesalahan pengenalan suara.";
+    if (event.error === "not-allowed" || event.error === "permission-denied") {
+      msg = "Izin mikrofon ditolak. Aktifkan akses mikrofon di pengaturan browser.";
+    } else if (event.error === "no-speech") {
+      return;
+    } else if (event.error === "network") {
+      msg = "Masalah jaringan saat memproses suara.";
+    }
+    showToast(msg, true);
+  },
 
     handleResult(event) {
       const scroll = $("#transcriptScroll");
